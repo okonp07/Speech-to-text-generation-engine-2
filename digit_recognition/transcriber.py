@@ -9,6 +9,7 @@ import math
 from pathlib import Path
 import tempfile
 from typing import Iterable, Optional, Sequence
+import wave
 
 import numpy as np
 
@@ -250,13 +251,6 @@ class SpeechTranscriber:
         language: str | None = None,
         vad_filter: bool = True,
     ) -> TranscriptionResult:
-        try:
-            import soundfile as sf
-        except ImportError as exc:  # pragma: no cover - depends on environment
-            raise ImportError(
-                "soundfile is required to transcribe NumPy arrays. Install requirements.txt first."
-            ) from exc
-
         audio = np.asarray(audio_array, dtype=np.float32)
         if sample_rate and sample_rate != self.processor.sample_rate:
             try:
@@ -273,7 +267,18 @@ class SpeechTranscriber:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
             temp_path = Path(temp_file.name)
         try:
-            sf.write(temp_path, audio, self.processor.sample_rate)
+            try:
+                import soundfile as sf
+
+                sf.write(temp_path, audio, self.processor.sample_rate)
+            except ImportError:
+                clipped = np.clip(audio, -1.0, 1.0)
+                pcm16 = (clipped * 32767.0).astype(np.int16)
+                with wave.open(str(temp_path), "wb") as wav_file:
+                    wav_file.setnchannels(1)
+                    wav_file.setsampwidth(2)
+                    wav_file.setframerate(self.processor.sample_rate)
+                    wav_file.writeframes(pcm16.tobytes())
             return self.transcribe_file(temp_path, language=language, vad_filter=vad_filter)
         finally:
             temp_path.unlink(missing_ok=True)

@@ -55,6 +55,19 @@ python -m pip install -r requirements.txt
 streamlit run streamlit_app.py
 ```
 
+If you use the project-local environment in this repo, prefer:
+
+```powershell
+.\SoT\Scripts\streamlit.exe run .\streamlit_app.py
+```
+
+Or activate the environment first so `streamlit run streamlit_app.py` resolves to the same interpreter:
+
+```powershell
+.\SoT\Scripts\Activate.ps1
+streamlit run .\streamlit_app.py
+```
+
 Recommended Python version:
 
 - Python `3.11` or `3.12`
