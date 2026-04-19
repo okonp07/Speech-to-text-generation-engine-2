@@ -1435,7 +1435,23 @@ def _render_app_page() -> None:
                         "locally where YouTube usually allows the request."
                     )
                     with st.expander("Technical details"):
-                        st.caption(str(exc))
+                        proxy_status = (
+                            "routed through Webshare proxy"
+                            if ws_user and ws_pass
+                            else "direct connection (no Webshare proxy configured)"
+                        )
+                        underlying = exc.__cause__
+                        underlying_class = (
+                            type(underlying).__name__ if underlying else "unknown"
+                        )
+                        underlying_msg = (
+                            str(underlying)[:500] if underlying else ""
+                        )
+                        st.caption(f"Request path: {proxy_status}")
+                        st.caption(f"Library exception: {underlying_class}")
+                        st.caption(f"Our message: {exc}")
+                        if underlying_msg:
+                            st.caption(f"Library message: {underlying_msg}")
                 except CaptionsError as exc:
                     st.error(str(exc))
 
