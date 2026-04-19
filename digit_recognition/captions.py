@@ -66,6 +66,10 @@ def fetch_youtube_captions(
 ) -> TranscriptionResult:
     """Fetch captions for *url* and return them as a :class:`TranscriptionResult`.
 
+    Works transparently across the two incompatible versions of
+    ``youtube-transcript-api``: the 0.6.x class-method API and the 1.x
+    instance-based API.
+
     Parameters
     ----------
     url:
@@ -77,19 +81,13 @@ def fetch_youtube_captions(
     """
 
     try:
-        from youtube_transcript_api import (  # type: ignore
-            YouTubeTranscriptApi,
-        )
-        from youtube_transcript_api._errors import (  # type: ignore
-            NoTranscriptFound,
-            TranscriptsDisabled,
-            VideoUnavailable,
-        )
+        from youtube_transcript_api import YouTubeTranscriptApi  # type: ignore
     except ImportError as exc:  # pragma: no cover - env-dependent
         raise CaptionsError(
             "youtube-transcript-api is not installed. Add it to requirements.txt."
         ) from exc
 
+    known_errors = _load_known_error_classes()
     video_id = extract_video_id(url)
 
     # The language priority order we try. We always fall through to the
@@ -101,63 +99,33 @@ def fetch_youtube_captions(
         if fallback not in preferred_languages:
             preferred_languages.append(fallback)
 
-    entries: Sequence[dict]
-    chosen_language = "unknown"
-
     try:
-        # list_transcripts gives us the set of available tracks so we can
-        # prefer a manually-authored caption over an auto-generated one.
-        try:
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        except AttributeError:  # pragma: no cover - older/newer API variants
-            transcript_list = None
-
-        if transcript_list is not None:
-            transcript = None
-            try:
-                transcript = transcript_list.find_manually_created_transcript(
-                    preferred_languages
-                )
-            except Exception:
-                try:
-                    transcript = transcript_list.find_generated_transcript(
-                        preferred_languages
-                    )
-                except Exception:
-                    # Fall back to whatever is available.
-                    try:
-                        transcript = next(iter(transcript_list), None)
-                    except Exception:
-                        transcript = None
-            if transcript is None:
-                raise NoTranscriptFound(
-                    video_id, preferred_languages, transcript_list
-                )
-            entries = transcript.fetch()
-            chosen_language = getattr(transcript, "language_code", "unknown") or "unknown"
-        else:
-            # Very old / very new API fallback: pull directly.
-            entries = YouTubeTranscriptApi.get_transcript(
-                video_id, languages=preferred_languages
-            )
-            chosen_language = language_hint or preferred_languages[0] or "unknown"
-
-    except TranscriptsDisabled as exc:
+        entries, chosen_language = _get_transcript_entries(
+            YouTubeTranscriptApi, video_id, preferred_languages
+        )
+    except known_errors["TranscriptsDisabled"] as exc:
         raise CaptionsUnavailableError(
             "Captions are disabled on this video."
         ) from exc
-    except NoTranscriptFound as exc:
+    except known_errors["NoTranscriptFound"] as exc:
         raise CaptionsUnavailableError(
             "No captions are available for this video."
         ) from exc
-    except VideoUnavailable as exc:
+    except known_errors["VideoUnavailable"] as exc:
         raise CaptionsUnavailableError(
             "YouTube reports this video as unavailable."
         ) from exc
+    except CaptionsError:
+        raise
     except Exception as exc:  # pragma: no cover - defensive / network
         message = str(exc).strip() or exc.__class__.__name__
         lowered = message.lower()
-        if "could not retrieve" in lowered or "no element found" in lowered:
+        if (
+            "could not retrieve" in lowered
+            or "no element found" in lowered
+            or "transcripts are disabled" in lowered
+            or "no transcripts were found" in lowered
+        ):
             raise CaptionsUnavailableError(
                 "YouTube returned no captions for this video."
             ) from exc
@@ -185,6 +153,138 @@ def fetch_youtube_captions(
         duration_seconds=duration,
         segments=tuple(segments),
     )
+
+
+def _load_known_error_classes() -> dict:
+    """Return the library's named error classes, with safe fallbacks.
+
+    The 1.x release reorganized the error module paths slightly. We try a
+    few locations and substitute a private marker class when one is missing
+    so the ``except`` blocks in :func:`fetch_youtube_captions` still work.
+    """
+
+    result: dict = {}
+    for name in ("TranscriptsDisabled", "NoTranscriptFound", "VideoUnavailable"):
+        cls = None
+        for module_path in (
+            "youtube_transcript_api._errors",
+            "youtube_transcript_api",
+        ):
+            try:
+                module = __import__(module_path, fromlist=[name])
+                cls = getattr(module, name, None)
+                if cls is not None:
+                    break
+            except Exception:
+                continue
+        if cls is None:
+
+            class _Missing(Exception):  # noqa: D401 - sentinel
+                """Placeholder so except-clause matches nothing."""
+
+            cls = _Missing
+        result[name] = cls
+    return result
+
+
+def _get_transcript_entries(
+    api_class,
+    video_id: str,
+    preferred_languages: list[str],
+):
+    """Version-agnostic adapter returning ``(entries, language_code)``."""
+
+    # --- 1.x: instance-based API (``YouTubeTranscriptApi().fetch/.list``) ---
+    # Some 1.x builds still have to be instantiated before ``fetch``/``list``
+    # work; others expose them as methods on the class object directly. Try
+    # an instance first — this is the common 1.x shape.
+    try:
+        instance = api_class()
+    except Exception:  # pragma: no cover - defensive
+        instance = None
+
+    if instance is not None and (
+        hasattr(instance, "fetch") or hasattr(instance, "list")
+    ):
+        transcript_list = None
+        if hasattr(instance, "list"):
+            try:
+                transcript_list = instance.list(video_id)
+            except Exception:
+                transcript_list = None
+
+        if transcript_list is not None:
+            transcript = _pick_best_transcript(transcript_list, preferred_languages)
+            fetched = transcript.fetch()
+            return _unpack_fetched(fetched, getattr(transcript, "language_code", None))
+
+        if hasattr(instance, "fetch"):
+            fetched = instance.fetch(video_id, languages=preferred_languages)
+            return _unpack_fetched(
+                fetched,
+                preferred_languages[0] if preferred_languages else None,
+            )
+
+    # --- 0.6.x: class-method API (``YouTubeTranscriptApi.list_transcripts``) ---
+    if hasattr(api_class, "list_transcripts"):
+        transcript_list = api_class.list_transcripts(video_id)
+        transcript = _pick_best_transcript(transcript_list, preferred_languages)
+        entries = transcript.fetch()
+        return _unpack_fetched(entries, getattr(transcript, "language_code", None))
+
+    if hasattr(api_class, "get_transcript"):
+        entries = api_class.get_transcript(
+            video_id, languages=preferred_languages
+        )
+        return _unpack_fetched(
+            entries,
+            preferred_languages[0] if preferred_languages else None,
+        )
+
+    raise CaptionsError(
+        "Incompatible youtube-transcript-api version: no known entry points "
+        "(fetch/list or get_transcript/list_transcripts). Upgrade the library."
+    )
+
+
+def _pick_best_transcript(transcript_list, preferred_languages: list[str]):
+    """Prefer a human-authored caption over an auto-generated one."""
+
+    for finder in ("find_manually_created_transcript", "find_generated_transcript"):
+        fn = getattr(transcript_list, finder, None)
+        if fn is None:
+            continue
+        try:
+            return fn(preferred_languages)
+        except Exception:
+            continue
+    try:
+        return next(iter(transcript_list))
+    except StopIteration as exc:
+        raise CaptionsUnavailableError(
+            "No captions are available for this video."
+        ) from exc
+
+
+def _unpack_fetched(fetched, fallback_language: Optional[str]):
+    """Normalize the many shapes ``youtube-transcript-api`` returns.
+
+    Returns ``(entries_iterable, language_code)``.
+    """
+
+    language = None
+
+    # v1.x FetchedTranscript: has ``.snippets`` and ``.language_code``.
+    if hasattr(fetched, "snippets"):
+        entries = list(fetched.snippets)
+        language = getattr(fetched, "language_code", None)
+    elif hasattr(fetched, "__iter__") and not isinstance(fetched, (str, bytes)):
+        entries = list(fetched)
+        language = getattr(fetched, "language_code", None)
+    else:
+        entries = [fetched]
+
+    return entries, (language or fallback_language or "unknown")
 
 
 def _entries_to_segments(
