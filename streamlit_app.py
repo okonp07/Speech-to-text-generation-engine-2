@@ -865,8 +865,18 @@ def _render_feedback_page() -> None:
         st.success("Thanks for the feedback. Your response has been recorded.")
 
 
+# Bump this whenever the SpeechTranscriber API surface changes. The
+# version becomes part of the cache key, so Streamlit's cache_resource
+# can't hand back a pre-change instance after a hot-reload — which
+# otherwise causes AttributeError / TypeError on new kwargs.
+_TRANSCRIBER_CACHE_VERSION = "2-progress-callback"
+
+
 @st.cache_resource
-def _load_transcriber(model_size: str) -> "SpeechTranscriber":
+def _load_transcriber(
+    model_size: str,
+    _api_version: str = _TRANSCRIBER_CACHE_VERSION,
+) -> "SpeechTranscriber":
     try:
         from digit_recognition import SpeechTranscriber
     except ImportError as exc:
@@ -919,9 +929,19 @@ def _transcribe_local_path(
     state) rather than deleting straight away.
     """
 
-    result = transcriber.transcribe_file(
-        audio_path, language=language, progress_callback=progress_callback
-    )
+    try:
+        result = transcriber.transcribe_file(
+            audio_path, language=language, progress_callback=progress_callback
+        )
+    except TypeError as exc:
+        # Defensive: Streamlit's cache_resource can hold a stale
+        # transcriber from before progress_callback existed. Retry
+        # without the kwarg so the user still gets a transcript —
+        # just without the live progress bar. The user can recover
+        # the bar by rebooting the app from Manage app.
+        if "progress_callback" not in str(exc):
+            raise
+        result = transcriber.transcribe_file(audio_path, language=language)
     audio = transcriber.processor.load_audio(audio_path)
     report = transcriber.processor.quality_report(audio)
     return audio, result, report
