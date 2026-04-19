@@ -278,25 +278,32 @@ def _format_ytdlp_error(exc: Exception | None) -> str:
     clean = raw.splitlines()[-1] if raw else ""
 
     lowered = clean.lower()
-    if "sign in" in lowered and "bot" in lowered:
+    # Order matters: match the most specific messages first.
+    if "sign in to confirm you" in lowered and "bot" in lowered:
         return (
             "YouTube is challenging this request with a bot check. This usually "
             "happens from cloud IPs (e.g. Streamlit Community Cloud). Try a "
             "different video, run the app locally, or supply YouTube cookies. "
             f"Original error: {clean}"
         )
-    if "private video" in lowered:
-        return "This YouTube video is private and cannot be downloaded."
-    if "age" in lowered and "confirm" in lowered:
+    if "age-restricted" in lowered or "age restricted" in lowered:
         return (
             "This video is age-restricted and requires sign-in. "
             "yt-dlp cannot fetch it anonymously."
         )
+    if "private video" in lowered:
+        return "This YouTube video is private and cannot be downloaded."
     if "members-only" in lowered or "members only" in lowered:
         return "This video is members-only and cannot be downloaded anonymously."
-    if "not available in your country" in lowered or "geo" in lowered:
+    if "not available in your country" in lowered or "geo-restrict" in lowered:
         return "This video is region-restricted for your server's location."
-    if "unavailable" in lowered:
+    if "proxy" in lowered and "403" in lowered:
+        return (
+            "Network layer refused the connection (proxy 403). The host running "
+            "this app cannot reach YouTube. Check outbound network / firewall "
+            f"rules. Details: {clean}"
+        )
+    if "video unavailable" in lowered:
         return f"YouTube reports this video as unavailable. Details: {clean}"
 
     # Fallback: include the real yt-dlp message so the user can act on it.
