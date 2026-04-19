@@ -45,6 +45,30 @@ FEEDBACK_FILE = Path(__file__).resolve().parent / "feedback_responses.csv"
 HeroPill = tuple[str, str]
 
 
+def _render_video_file_workaround(headline: str) -> None:
+    """Show a clear three-step path from a blocked YouTube URL to a
+    successful transcript via the Video file tab.
+
+    Used by both the "captions are blocked" and "captions don't exist"
+    branches of the YouTube tab — in either case the user's reliable
+    next move is to download the video locally and upload it here.
+    """
+
+    st.warning(headline)
+    st.markdown(
+        "**Reliable workaround — usually under a minute:**\n\n"
+        "1. **Download the video** with a free, ad-light tool like "
+        "[cobalt.tools](https://cobalt.tools) or "
+        "[savefrom.net](https://en.savefrom.net). "
+        "Pick the lowest video quality (360p is plenty for transcription) "
+        "— smaller file = faster upload.\n"
+        "2. **Switch to the “🎞️ Video file” tab** at the top of this page.\n"
+        "3. **Drag the downloaded file** into the upload area. The app will "
+        "extract the audio with ffmpeg and run Whisper on it locally — same "
+        "transcript you would have got from the YouTube path."
+    )
+
+
 def _get_webshare_credentials() -> tuple[str | None, str | None]:
     """Read Webshare proxy credentials from Streamlit secrets (or env).
 
@@ -1415,11 +1439,9 @@ def _render_app_page() -> None:
                 except InvalidYouTubeUrlError as exc:
                     st.error(str(exc))
                 except CaptionsUnavailableError:
-                    st.warning(
-                        "This video does not have captions available, so we cannot "
-                        "transcribe it directly. Try a different URL, or switch to the "
-                        "**Video file** tab and upload the clip so the app can run "
-                        "Whisper on it locally."
+                    _render_video_file_workaround(
+                        "This video does not have a caption track we can fetch. "
+                        "You can still transcribe it — just not via the URL."
                     )
                 except CaptionsBlockedError as exc:
                     # YouTube is refusing to return captions to this host
@@ -1427,12 +1449,9 @@ def _render_app_page() -> None:
                     # very well exist on the video — we just can't fetch
                     # them from this IP. Tell the user honestly rather
                     # than pretending the video has no captions.
-                    st.warning(
-                        "YouTube is temporarily blocking caption requests from this "
-                        "server. The video may still have captions — this host just "
-                        "cannot reach them. Try again in a minute, switch to the "
-                        "**Video file** tab and upload the clip, or run the app "
-                        "locally where YouTube usually allows the request."
+                    _render_video_file_workaround(
+                        "YouTube is blocking caption requests from this server. "
+                        "The video may have captions, but this host can't reach them."
                     )
                     with st.expander("Technical details"):
                         proxy_status = (
@@ -1465,7 +1484,13 @@ def _render_app_page() -> None:
                 source_label="caption",
             )
         elif not run_youtube:
-            st.info("Paste a YouTube URL, then click “Fetch transcript”.")
+            st.info(
+                "Paste a YouTube URL, then click “Fetch transcript”. "
+                "If YouTube refuses the caption request (common from cloud "
+                "hosts), download the clip with [cobalt.tools](https://cobalt.tools) "
+                "or [savefrom.net](https://en.savefrom.net) and use the "
+                "**🎞️ Video file** tab — Whisper will transcribe it locally."
+            )
 
 
 def main() -> None:
