@@ -1323,6 +1323,40 @@ def _render_app_page() -> None:
         )
         st.session_state.youtube_url_value = youtube_url
 
+        with st.expander(
+            "Bot-check workaround: upload a YouTube cookies.txt",
+            expanded=False,
+        ):
+            st.markdown(
+                "On hosted deployments (Streamlit Community Cloud, Render, Fly.io, "
+                "etc.) YouTube frequently demands a signed-in cookie before it will "
+                "serve audio — the error looks like *“Sign in to confirm you're not "
+                "a bot”*. Upload a `cookies.txt` exported from your browser to bypass it."
+            )
+            st.markdown(
+                "**How to get `cookies.txt`:** install the "
+                "[Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) "
+                "Chrome extension, open [youtube.com](https://www.youtube.com) while "
+                "signed in, click the extension, and save the file. **Use a throwaway "
+                "Google account** — anyone with this file can use your YouTube session."
+            )
+            uploaded_cookies = st.file_uploader(
+                "cookies.txt",
+                type=["txt"],
+                key="youtube-cookies",
+                help="Netscape-format cookies exported from your browser while signed into YouTube.",
+            )
+            if uploaded_cookies is not None:
+                st.session_state["youtube_cookies_bytes"] = uploaded_cookies.getvalue()
+                st.success("Cookies loaded for this session.")
+            elif "youtube_cookies_bytes" in st.session_state:
+                st.caption("Cookies from an earlier upload are still active in this session.")
+            if st.session_state.get("youtube_cookies_bytes") and st.button(
+                "Clear stored cookies", key="clear-youtube-cookies"
+            ):
+                st.session_state.pop("youtube_cookies_bytes", None)
+                st.rerun()
+
         col_go_yt, col_clear_yt = st.columns([1, 1])
         with col_go_yt:
             run_youtube = st.button(
@@ -1349,8 +1383,20 @@ def _render_app_page() -> None:
                 )
             elif cached_yt is None:
                 with st.spinner("Downloading audio from YouTube…"):
+                    cookies_bytes = st.session_state.get("youtube_cookies_bytes")
+                    cookie_tmp: Path | None = None
                     try:
-                        ingested = fetch_youtube_audio(url_key)
+                        if cookies_bytes:
+                            cookie_tmp = Path(
+                                tempfile.NamedTemporaryFile(
+                                    delete=False, suffix=".txt"
+                                ).name
+                            )
+                            cookie_tmp.write_bytes(cookies_bytes)
+                        ingested = fetch_youtube_audio(
+                            url_key,
+                            cookiefile=cookie_tmp,
+                        )
                         st.session_state.youtube_cache[url_key] = (
                             ingested.audio_path,
                             ingested.display_name,
@@ -1359,6 +1405,9 @@ def _render_app_page() -> None:
                     except MediaIngestError as exc:
                         st.error(str(exc))
                         cached_yt = None
+                    finally:
+                        if cookie_tmp is not None:
+                            cookie_tmp.unlink(missing_ok=True)
 
         if cached_yt is not None:
             audio_path, display_name = cached_yt

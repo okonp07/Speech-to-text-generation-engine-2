@@ -86,6 +86,7 @@ def fetch_youtube_audio(
     output_dir: str | os.PathLike[str] | None = None,
     preferred_codec: str = "mp3",
     preferred_quality: str = "192",
+    cookiefile: str | os.PathLike[str] | None = None,
 ) -> IngestedMedia:
     """Download the audio stream of *url* and return the local file path.
 
@@ -99,6 +100,10 @@ def fetch_youtube_audio(
     preferred_codec / preferred_quality:
         Forwarded to the ``FFmpegExtractAudio`` post-processor used by
         ``yt-dlp``.
+    cookiefile:
+        Optional path to a Netscape-format ``cookies.txt`` file. Required when
+        the host IP is being bot-checked by YouTube (typical on Streamlit
+        Community Cloud and other datacenter deployments).
     """
 
     if not is_valid_youtube_url(url):
@@ -148,6 +153,8 @@ def fetch_youtube_audio(
             )
         },
     }
+    if cookiefile is not None:
+        base_opts["cookiefile"] = str(cookiefile)
 
     # YouTube often rotates which "player client" works at a given moment.
     # Try a few in order; the first one that succeeds wins. This avoids a
