@@ -1068,16 +1068,22 @@ def _render_download_buttons(result: "TranscriptionResult", base_name: str) -> N
         )
 
 
-def _render_voicebox_tts_panel(result: "TranscriptionResult", display_name: str) -> None:
-    """Render optional text-to-speech controls backed by a local Voicebox server."""
+def _render_voicebox_tts_panel(
+    result: "TranscriptionResult | None" = None,
+    display_name: str = "voicebox_tts",
+    *,
+    expanded: bool = False,
+    anchor_id: str | None = "voicebox-tts-section",
+) -> None:
+    """Render text-to-speech controls backed by a local Voicebox server."""
 
     _section_intro(
         "Voicebox text-to-speech",
         (
-            "Send this transcript to a running Voicebox server and play the generated voice "
-            "inside the app."
+            "Paste text or reuse a transcript, send it to a running Voicebox server, "
+            "and play the generated voice inside the app."
         ),
-        anchor_id="voicebox-tts-section",
+        anchor_id=anchor_id,
     )
 
     key_prefix = f"voicebox-{_safe_basename(display_name)}"
@@ -1085,7 +1091,14 @@ def _render_voicebox_tts_panel(result: "TranscriptionResult", display_name: str)
     audio_key = f"{key_prefix}-audio"
     generation_key = f"{key_prefix}-generation"
 
-    with st.expander("Read transcript aloud with Voicebox", expanded=False):
+    default_text = result.text if result is not None else ""
+    default_language = (
+        result.language
+        if result is not None and result.language in VOICEBOX_LANGUAGES
+        else "en"
+    )
+
+    with st.expander("Open Voicebox TTS", expanded=expanded):
         api_url = st.text_input(
             "Voicebox API URL",
             value=_get_voicebox_api_url(),
@@ -1147,7 +1160,6 @@ def _render_voicebox_tts_panel(result: "TranscriptionResult", display_name: str)
                 key=f"{key_prefix}-profile-id",
                 placeholder="Paste a Voicebox profile id, or load profiles above.",
             ).strip()
-            default_language = result.language if result.language in VOICEBOX_LANGUAGES else "en"
             default_engine = None
 
         settings_left, settings_right = st.columns(2)
@@ -1185,9 +1197,10 @@ def _render_voicebox_tts_panel(result: "TranscriptionResult", display_name: str)
 
         tts_text = st.text_area(
             "Text to speak",
-            value=result.text,
+            value=default_text,
             height=180,
             key=f"{key_prefix}-text",
+            placeholder="Paste text here, then choose a Voicebox profile and generate speech.",
         )
 
         generate = st.button(
@@ -1391,7 +1404,7 @@ def _render_results_panel(
         "Save the transcript alongside time-coded SRT/VTT subtitles and a full JSON dump.",
     )
     _render_download_buttons(result, display_name)
-    _render_voicebox_tts_panel(result, display_name)
+    _render_voicebox_tts_panel(result, display_name, anchor_id=None)
 
     if result.segments:
         _section_intro(
@@ -1593,6 +1606,7 @@ def _run_and_render(
 
 def _render_app_page() -> None:
     _render_hero()
+    _render_voicebox_tts_panel(expanded=True)
 
     if "history" not in st.session_state:
         st.session_state.history = []
