@@ -9,3 +9,4 @@ soundfile>=0.12
 faster-whisper>=1.1
 yt-dlp>=2025.3.1
 youtube-transcript-api>=0.6.2
+requests>=2.32

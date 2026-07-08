@@ -10,6 +10,7 @@ import time
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
@@ -32,6 +33,13 @@ from digit_recognition.media_ingest import (
     fetch_youtube_audio,
     is_valid_youtube_url,
 )
+from digit_recognition.voicebox_client import (
+    DEFAULT_VOICEBOX_API_URL,
+    VOICEBOX_LANGUAGES,
+    VOICEBOX_TTS_ENGINES,
+    VoiceboxClient,
+    VoiceboxError,
+)
 
 if TYPE_CHECKING:
     from digit_recognition.transcriber import SpeechTranscriber, TranscriptionResult
@@ -41,7 +49,7 @@ st.set_page_config(page_title="Speech-to-Text Transcription", page_icon="🎤", 
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 AUTHOR_IMAGE = ASSETS_DIR / "pic1.png"
-REPO_URL = "https://github.com/okonp07/Speech-to-text-generation-engine"
+REPO_URL = "https://github.com/okonp07/speech-to-text-generation-engine-2"
 FUTURE_DEVELOPMENT_URL = f"{REPO_URL}/blob/main/future-development.md"
 FEEDBACK_FILE = Path(__file__).resolve().parent / "feedback_responses.csv"
 HeroPill = tuple[str, str]
@@ -121,6 +129,25 @@ def _get_webshare_credentials() -> tuple[str | None, str | None]:
     if not pwd:
         pwd = os.environ.get("WEBSHARE_PROXY_PASSWORD") or None
     return user, pwd
+
+
+def _get_voicebox_api_url() -> str:
+    """Read the Voicebox API URL from Streamlit secrets, env, or default."""
+
+    try:
+        configured_url = st.secrets.get("VOICEBOX_API_URL")
+    except Exception:
+        configured_url = None
+    return (
+        str(configured_url or "").strip()
+        or os.environ.get("VOICEBOX_API_URL", "").strip()
+        or DEFAULT_VOICEBOX_API_URL
+    )
+
+
+def _is_local_voicebox_url(api_url: str) -> bool:
+    host = (urlparse(api_url).hostname or "").lower()
+    return host in {"localhost", "127.0.0.1", "::1"}
 
 
 def _inject_styles() -> None:
@@ -575,6 +602,7 @@ def _render_hero(
     pills = pills or [
         ("Microphone recording", "#input-section"),
         ("Transcript output", "#results-section"),
+        ("Voicebox TTS", "#voicebox-tts-section"),
         ("Confidence score", "#results-section"),
         ("Audio quality checks", "#quality-checks-section"),
     ]
@@ -1040,6 +1068,172 @@ def _render_download_buttons(result: "TranscriptionResult", base_name: str) -> N
         )
 
 
+def _render_voicebox_tts_panel(result: "TranscriptionResult", display_name: str) -> None:
+    """Render optional text-to-speech controls backed by a local Voicebox server."""
+
+    _section_intro(
+        "Voicebox text-to-speech",
+        (
+            "Send this transcript to a running Voicebox server and play the generated voice "
+            "inside the app."
+        ),
+        anchor_id="voicebox-tts-section",
+    )
+
+    key_prefix = f"voicebox-{_safe_basename(display_name)}"
+    profiles_key = f"{key_prefix}-profiles"
+    audio_key = f"{key_prefix}-audio"
+    generation_key = f"{key_prefix}-generation"
+
+    with st.expander("Read transcript aloud with Voicebox", expanded=False):
+        api_url = st.text_input(
+            "Voicebox API URL",
+            value=_get_voicebox_api_url(),
+            key=f"{key_prefix}-api-url",
+            help="Start Voicebox locally, then keep the default URL unless you changed its port.",
+        )
+        if _is_local_voicebox_url(api_url):
+            st.caption(
+                "For the public Streamlit app, replace this with a publicly reachable "
+                "Voicebox API URL. Localhost only works when Streamlit is running on "
+                "the same machine as Voicebox."
+            )
+
+        load_col, clear_col = st.columns([1, 1])
+        with load_col:
+            load_profiles = st.button(
+                "Load voice profiles",
+                key=f"{key_prefix}-load-profiles",
+                use_container_width=True,
+            )
+        with clear_col:
+            if st.button(
+                "Clear generated speech",
+                key=f"{key_prefix}-clear",
+                use_container_width=True,
+            ):
+                st.session_state.pop(audio_key, None)
+                st.session_state.pop(generation_key, None)
+                st.rerun()
+
+        if load_profiles:
+            try:
+                st.session_state[profiles_key] = VoiceboxClient(api_url).list_profiles()
+                if not st.session_state[profiles_key]:
+                    st.warning("Voicebox is running, but no voice profiles were found.")
+            except VoiceboxError as exc:
+                st.session_state.pop(profiles_key, None)
+                st.error(str(exc))
+
+        profiles = st.session_state.get(profiles_key, [])
+        profile_id = ""
+        if profiles:
+            selected_profile = st.selectbox(
+                "Voice profile",
+                profiles,
+                format_func=lambda profile: profile.label,
+                key=f"{key_prefix}-profile-select",
+            )
+            profile_id = selected_profile.id
+            default_language = (
+                selected_profile.language
+                if selected_profile.language in VOICEBOX_LANGUAGES
+                else "en"
+            )
+            default_engine = selected_profile.default_engine or selected_profile.preset_engine
+        else:
+            profile_id = st.text_input(
+                "Voice profile ID",
+                key=f"{key_prefix}-profile-id",
+                placeholder="Paste a Voicebox profile id, or load profiles above.",
+            ).strip()
+            default_language = result.language if result.language in VOICEBOX_LANGUAGES else "en"
+            default_engine = None
+
+        settings_left, settings_right = st.columns(2)
+        with settings_left:
+            engine_options = ["Profile default", *VOICEBOX_TTS_ENGINES]
+            engine_default_index = (
+                engine_options.index(default_engine)
+                if default_engine in engine_options
+                else 0
+            )
+            engine_label = st.selectbox(
+                "TTS engine",
+                engine_options,
+                index=engine_default_index,
+                key=f"{key_prefix}-engine",
+            )
+            language = st.selectbox(
+                "Voice language",
+                VOICEBOX_LANGUAGES,
+                index=VOICEBOX_LANGUAGES.index(default_language),
+                key=f"{key_prefix}-language",
+            )
+        with settings_right:
+            model_size = st.selectbox(
+                "Model size",
+                ["Voicebox default", "0.6B", "1.7B", "1B", "3B"],
+                index=0,
+                key=f"{key_prefix}-model-size",
+            )
+            instruct = st.text_input(
+                "Delivery instruction",
+                key=f"{key_prefix}-instruct",
+                placeholder="Optional, e.g. warm and conversational",
+            )
+
+        tts_text = st.text_area(
+            "Text to speak",
+            value=result.text,
+            height=180,
+            key=f"{key_prefix}-text",
+        )
+
+        generate = st.button(
+            "Generate speech with Voicebox",
+            key=f"{key_prefix}-generate",
+            type="primary",
+            use_container_width=True,
+            disabled=not profile_id or not tts_text.strip(),
+        )
+
+        if generate:
+            client = VoiceboxClient(api_url, timeout_seconds=30)
+            try:
+                with st.spinner("Voicebox is generating speech…"):
+                    generation = client.generate_speech(
+                        profile_id=profile_id,
+                        text=tts_text.strip(),
+                        language=language,
+                        engine=None if engine_label == "Profile default" else engine_label,
+                        model_size=None if model_size == "Voicebox default" else model_size,
+                        instruct=instruct.strip() or None,
+                    )
+                    generation = client.wait_for_generation(generation.id)
+                    audio_bytes = client.fetch_audio(generation.id)
+                st.session_state[generation_key] = generation
+                st.session_state[audio_key] = audio_bytes
+                st.success("Voicebox speech is ready.")
+            except VoiceboxError as exc:
+                st.error(str(exc))
+
+        audio_bytes = st.session_state.get(audio_key)
+        if audio_bytes:
+            generation = st.session_state.get(generation_key)
+            if generation and generation.duration:
+                st.caption(f"Generated audio duration: {generation.duration:.1f}s")
+            st.audio(audio_bytes, format="audio/wav")
+            st.download_button(
+                "Download generated speech",
+                data=audio_bytes,
+                file_name=f"{_safe_basename(display_name)}_voicebox.wav",
+                mime="audio/wav",
+                use_container_width=True,
+                key=f"{key_prefix}-download",
+            )
+
+
 def _render_about_page() -> None:
     _render_hero(
         kicker="Project Overview",
@@ -1197,6 +1391,7 @@ def _render_results_panel(
         "Save the transcript alongside time-coded SRT/VTT subtitles and a full JSON dump.",
     )
     _render_download_buttons(result, display_name)
+    _render_voicebox_tts_panel(result, display_name)
 
     if result.segments:
         _section_intro(

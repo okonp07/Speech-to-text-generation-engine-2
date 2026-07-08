@@ -9,7 +9,7 @@ Product requirements for this release: [`docs/speech-to-text-prd.md`](docs/speec
 ## Live app
 
 - Streamlit app: [https://digit-classifier-model-1.streamlit.app](https://digit-classifier-model-1.streamlit.app)
-- Repository: [https://github.com/okonp07/Speech-to-text-generation-engine](https://github.com/okonp07/Speech-to-text-generation-engine)
+- Repository: [https://github.com/okonp07/speech-to-text-generation-engine-2](https://github.com/okonp07/speech-to-text-generation-engine-2)
 
 ## What is in this repository
 
@@ -45,8 +45,8 @@ Product requirements for this release: [`docs/speech-to-text-prd.md`](docs/speec
 ## Run locally
 
 ```bash
-git clone https://github.com/okonp07/Speech-to-text-generation-engine.git
-cd Speech-to-text-generation-engine
+git clone https://github.com/okonp07/speech-to-text-generation-engine-2.git
+cd speech-to-text-generation-engine-2
 
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
@@ -104,6 +104,7 @@ The app supports:
 - waveform and mel-spectrogram visualizations
 - lightweight audio-quality checks
 - session transcription history
+- optional Voicebox text-to-speech playback for generated transcripts
 
 Run it locally:
 
@@ -111,10 +112,41 @@ Run it locally:
 streamlit run streamlit_app.py
 ```
 
+## Voicebox text-to-speech
+
+The app can send any transcript to [Voicebox](https://github.com/jamiepine/voicebox)
+and play the generated speech inline. Voicebox runs as a separate local service,
+so start Voicebox first and make sure it has at least one voice profile.
+
+By default, the Streamlit app connects to:
+
+```text
+http://127.0.0.1:17493
+```
+
+You can override that in the app's **Voicebox API URL** field or with:
+
+```bash
+export VOICEBOX_API_URL=http://127.0.0.1:17493
+```
+
+For Streamlit Community Cloud, set the same value in **App settings → Secrets**:
+
+```toml
+VOICEBOX_API_URL = "https://your-public-voicebox-api.example.com"
+```
+
+Do not use `127.0.0.1` or `localhost` for the public app unless Voicebox is
+running inside the same hosted environment. A Streamlit Cloud app cannot reach a
+Voicebox server running on your laptop.
+
+After transcription, open **Read transcript aloud with Voicebox**, load voice
+profiles, choose a profile/engine, and click **Generate speech with Voicebox**.
+
 ## Project structure
 
 ```text
-Speech-to-text-generation-engine/
+speech-to-text-generation-engine-2/
 ├── .github/workflows/ci.yml
 ├── Digit_Classification_from_Audio.ipynb
 ├── Dockerfile
